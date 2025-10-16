@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Papan Tulis Digital</title>
+    <title>Papan Tulis Digital v2</title>
     <!-- Memuat Tailwind CSS untuk styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Memuat Font Awesome untuk ikon -->
@@ -20,7 +20,7 @@
         #whiteboard {
             display: block;
             background-color: white;
-            cursor: crosshair; /* Mengubah kursor saat di atas kanvas */
+            /* Kursor akan diubah oleh JavaScript sesuai alat yang dipilih */
         }
         .tool-btn, .color-btn {
             width: 40px;
@@ -69,9 +69,10 @@
     <canvas id="whiteboard"></canvas>
 
     <!-- Toolbar untuk alat dan warna -->
-    <div id="toolbar" class="fixed bottom-4 left-4 bg-white p-4 rounded-xl shadow-2xl flex items-center gap-4 flex-wrap">
+    <div id="toolbar" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-white p-4 rounded-xl shadow-2xl flex items-center gap-4 flex-wrap justify-center">
         <!-- Pilihan Alat Gambar -->
         <div class="flex gap-2" id="tools">
+             <button data-tool="select" title="Pilih & Pindahkan" class="tool-btn"><i class="fas fa-arrows-alt"></i></button>
              <button data-tool="pen" title="Kuas" class="tool-btn active"><i class="fas fa-pencil-alt"></i></button>
              <button data-tool="eraser" title="Penghapus" class="tool-btn"><i class="fas fa-eraser"></i></button>
              <button data-tool="line" title="Garis Lurus" class="tool-btn"><i class="fas fa-minus"></i></button>
@@ -144,236 +145,323 @@ window.addEventListener('load', () => {
     const prevPageBtn = document.getElementById('prev-page');
     const nextPageBtn = document.getElementById('next-page');
 
-    // Variabel untuk menyimpan status menggambar
+    // Variabel untuk menyimpan status
     let isDrawing = false;
     let currentColor = 'black';
     let currentTool = 'pen';
     let isDashed = false;
-    let brushWidth = 2; // Ketebalan kuas/garis, default tipis
+    let brushWidth = 2;
     let startX, startY;
-    let snapshot; // Untuk menyimpan data kanvas saat menggambar bentuk
+    let snapshot;
+
+    // Variabel untuk manajemen gambar (drag & resize)
+    let selectedImage = null;
+    let isDragging = false;
+    let isResizing = false;
+    let dragOffsetX, dragOffsetY;
+    const resizeHandleSize = 10;
 
     // Variabel untuk Paginasi
-    let pagesData = []; // Menyimpan data URL setiap halaman
+    let pages = [];
     let currentPage = 0;
 
-    // Fungsi untuk mengatur ukuran kanvas sesuai jendela browser
+    // Fungsi untuk menggambar ulang seluruh canvas (latar belakang + gambar)
+    const redrawCanvas = () => {
+        if (!pages[currentPage]) return;
+        
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const page = pages[currentPage];
+        const drawingImg = new Image();
+        
+        const drawContent = () => {
+            // Gambar semua object gambar
+            page.images.forEach(imgObj => {
+                ctx.drawImage(imgObj.img, imgObj.x, imgObj.y, imgObj.width, imgObj.height);
+                // Jika gambar dipilih, gambar kotak seleksi dan handle resize
+                if (imgObj === selectedImage) {
+                    ctx.strokeStyle = '#4f46e5';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([6, 4]);
+                    ctx.strokeRect(imgObj.x, imgObj.y, imgObj.width, imgObj.height);
+                    ctx.setLineDash([]); 
+
+                    // Gambar handle resize (pojok kanan bawah)
+                    const handleX = imgObj.x + imgObj.width - (resizeHandleSize / 2);
+                    const handleY = imgObj.y + imgObj.height - (resizeHandleSize / 2);
+                    ctx.fillStyle = '#4f46e5';
+                    ctx.fillRect(handleX - (resizeHandleSize/2), handleY - (resizeHandleSize/2), resizeHandleSize, resizeHandleSize);
+                }
+            });
+        };
+
+        // Gambar latar belakang (semua coretan)
+        if (page.drawingData) {
+            drawingImg.onload = () => {
+                ctx.drawImage(drawingImg, 0, 0);
+                drawContent();
+            };
+            drawingImg.src = page.drawingData;
+        } else {
+            drawContent();
+        }
+    };
+
     const setCanvasSize = () => {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
-        // Mengisi kanvas dengan warna putih sebagai latar belakang
-        ctx.fillStyle = "white";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Inisialisasi halaman pertama
+        pages = [{ drawingData: null, images: [] }];
+        currentPage = 0;
+        redrawCanvas();
     };
 
     setCanvasSize();
-    pagesData[0] = canvas.toDataURL(); // Simpan halaman pertama yang kosong
 
-    // Atur ulang papan tulis saat ukuran jendela diubah untuk menghindari masalah dimensi
     window.addEventListener('resize', () => {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        pagesData = [];
-        currentPage = 0;
-        pageNumDisplay.textContent = '1';
-        ctx.fillStyle = "white";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        pagesData[0] = canvas.toDataURL();
-        alert("Ukuran jendela berubah, papan tulis direset.");
+        alert("Ukuran jendela berubah, papan tulis akan direset untuk pengalaman terbaik.");
+        setCanvasSize();
     });
+    
+    // --- Fungsi Bantuan untuk UI Toolbar ---
+    const setCursor = () => {
+        if(currentTool === 'select') {
+            canvas.style.cursor = 'default';
+        } else {
+            canvas.style.cursor = 'crosshair';
+        }
+    }
 
-    // Fungsi untuk menandai alat yang aktif
     const setActiveTool = (toolElement) => {
         document.querySelector('#tools .tool-btn.active').classList.remove('active');
         toolElement.classList.add('active');
         currentTool = toolElement.dataset.tool;
+        selectedImage = null;
+        redrawCanvas();
+        setCursor();
     };
 
-    // Fungsi untuk menandai warna yang aktif
     const setActiveColor = (colorElement) => {
         document.querySelector('.color-btn.active').classList.remove('active');
         colorElement.classList.add('active');
         currentColor = colorElement.dataset.color;
     };
 
-    // Fungsi untuk menandai ketebalan yang aktif
     const setActiveStroke = (strokeElement) => {
         document.querySelector('#stroke-widths .tool-btn.active').classList.remove('active');
         strokeElement.classList.add('active');
         brushWidth = parseInt(strokeElement.dataset.width);
     };
 
-    // Fungsi yang dijalankan saat mouse ditekan (mulai menggambar)
-    const startDraw = (e) => {
-        isDrawing = true;
-        startX = e.offsetX; // Posisi X mouse
-        startY = e.offsetY; // Posisi Y mouse
-        ctx.beginPath(); // Memulai path gambar baru
-        ctx.lineWidth = currentTool === 'eraser' ? 25 : brushWidth;
-        ctx.strokeStyle = currentTool === 'eraser' ? 'white' : currentColor;
-        ctx.fillStyle = currentColor;
-        // Menyimpan kondisi kanvas saat ini sebelum menggambar bentuk (untuk preview)
-        snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    };
-
-    const drawPen = (e) => {
-        ctx.lineCap = "round"; // Ujung kuas bulat
-        ctx.lineJoin = "round";
-        ctx.lineTo(e.offsetX, e.offsetY); // Membuat garis ke posisi mouse
-        ctx.stroke(); // Menggambar garis
-    };
-
-    const drawLine = (e) => {
-        ctx.putImageData(snapshot, 0, 0); // Kembalikan kanvas ke kondisi awal
-        ctx.beginPath();
-        ctx.moveTo(startX, startY);
-
+    // --- Fungsi Gambar (Bentuk & Garis) ---
+    // Refactor fungsi gambar untuk bisa menerima konteks (ctx) yang berbeda jika diperlukan
+    const drawLine = (e, context) => {
+        context.beginPath();
+        context.moveTo(startX, startY);
         if (e.shiftKey) {
-            // Logika untuk mengunci sudut garis ke 0, 45, 90 derajat
             let dx = e.offsetX - startX;
             let dy = e.offsetY - startY;
-            let angle = Math.atan2(dy, dx); // Hitung sudut dalam radian
-            // Bulatkan sudut ke kelipatan 45 derajat terdekat (PI/4 radian)
+            let angle = Math.atan2(dy, dx);
             let snappedAngle = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
-            let distance = Math.sqrt(dx * dx + dy * dy); // Hitung jarak
-            // Hitung titik akhir yang baru berdasarkan sudut yang sudah dikunci
+            let distance = Math.sqrt(dx * dx + dy * dy);
             let endX = startX + distance * Math.cos(snappedAngle);
             let endY = startY + distance * Math.sin(snappedAngle);
-            ctx.lineTo(endX, endY);
+            context.lineTo(endX, endY);
         } else {
-            // Gambar garis bebas seperti biasa jika Shift tidak ditekan
-            ctx.lineTo(e.offsetX, e.offsetY);
+            context.lineTo(e.offsetX, e.offsetY);
         }
-        ctx.stroke();
+        context.stroke();
     };
 
-    const drawRectangle = (e) => {
-        ctx.putImageData(snapshot, 0, 0);
-        ctx.beginPath();
-        // Jika menekan tombol Shift, gambar persegi
+    const drawRectangle = (e, context) => {
+        context.beginPath();
         if (e.shiftKey) {
             let side = Math.max(Math.abs(e.offsetX - startX), Math.abs(e.offsetY - startY));
             let dirX = (e.offsetX - startX > 0) ? 1 : -1;
             let dirY = (e.offsetY - startY > 0) ? 1 : -1;
-            ctx.strokeRect(startX, startY, side * dirX, side * dirY);
+            context.strokeRect(startX, startY, side * dirX, side * dirY);
         } else {
-            // Gambar persegi panjang biasa
-            ctx.strokeRect(startX, startY, e.offsetX - startX, e.offsetY - startY);
+            context.strokeRect(startX, startY, e.offsetX - startX, e.offsetY - startY);
         }
     };
 
-    const drawCircle = (e) => {
-        ctx.putImageData(snapshot, 0, 0);
-        ctx.beginPath();
-        // Hitung radius berdasarkan jarak dari titik awal
+    const drawCircle = (e, context) => {
+        context.beginPath();
         let radius = Math.sqrt(Math.pow(e.offsetX - startX, 2) + Math.pow(e.offsetY - startY, 2));
-        ctx.arc(startX, startY, radius, 0, 2 * Math.PI); // Gambar lingkaran
-        ctx.stroke();
+        context.arc(startX, startY, radius, 0, 2 * Math.PI);
+        context.stroke();
     };
 
-    const drawEllipse = (e) => {
-        ctx.putImageData(snapshot, 0, 0);
-        ctx.beginPath();
+    const drawEllipse = (e, context) => {
+        context.beginPath();
         const radiusX = Math.abs((e.offsetX - startX) / 2);
         const radiusY = Math.abs((e.offsetY - startY) / 2);
         const centerX = startX + (e.offsetX - startX) / 2;
         const centerY = startY + (e.offsetY - startY) / 2;
-        // Gambar elips
-        ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, 2 * Math.PI);
-        ctx.stroke();
+        context.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, 2 * Math.PI);
+        context.stroke();
     };
 
-    const drawTriangle = (e) => {
-        ctx.putImageData(snapshot, 0, 0);
-        ctx.beginPath();
-
-        if (e.shiftKey) { // Segitiga sama sisi (Equilateral)
+    const drawTriangle = (e, context) => {
+        context.beginPath();
+        if (e.shiftKey) {
             const p1 = { x: startX, y: startY };
             const p2 = { x: e.offsetX, y: e.offsetY };
-            
             const dx = p2.x - p1.x;
             const dy = p2.y - p1.y;
-
-            // Rotasi titik kedua sebesar 60 derajat untuk mendapatkan titik ketiga
             const cos60 = 0.5;
             const sin60 = Math.sqrt(3) / 2;
             const p3x = p1.x + (dx * cos60 - dy * sin60);
             const p3y = p1.y + (dy * sin60 + dx * cos60);
-
-            ctx.moveTo(p1.x, p1.y);
-            ctx.lineTo(p2.x, p2.y);
-            ctx.lineTo(p3x, p3y);
-        } else { // Segitiga sama kaki (Isosceles)
-            // Titik awal adalah puncak
-            const p1 = { x: startX, y: startY };
-            // Titik mouse adalah sudut kanan bawah
-            const p2 = { x: e.offsetX, y: e.offsetY };
-            // Titik ketiga adalah refleksi dari titik kedua
-            const p3 = { x: startX - (e.offsetX - startX), y: e.offsetY };
-
-            ctx.moveTo(p1.x, p1.y);
-            ctx.lineTo(p2.x, p2.y);
-            ctx.lineTo(p3.x, p3.y);
-        }
-        ctx.closePath(); // Menutup path untuk membentuk segitiga
-        ctx.stroke();
-    };
-    
-    // Fungsi utama yang dipanggil saat mouse digerakkan
-    const drawing = (e) => {
-        if (!isDrawing) return;
-
-        // Atur style garis putus-putus jika checkbox aktif
-        isDashed = dashedCheckbox.checked;
-        if (isDashed) {
-            ctx.setLineDash([10, 10]);
+            context.moveTo(p1.x, p1.y);
+            context.lineTo(p2.x, p2.y);
+            context.lineTo(p3x, p3y);
         } else {
-            ctx.setLineDash([]);
+            const p1 = { x: startX, y: startY };
+            const p2 = { x: e.offsetX, y: e.offsetY };
+            const p3 = { x: startX - (e.offsetX - startX), y: e.offsetY };
+            context.moveTo(p1.x, p1.y);
+            context.lineTo(p2.x, p2.y);
+            context.lineTo(p3.x, p3.y);
         }
+        context.closePath();
+        context.stroke();
+    };
 
-        // Panggil fungsi gambar sesuai alat yang dipilih
-        switch (currentTool) {
-            case 'pen':
-            case 'eraser':
-                drawPen(e); 
-                break;
-            case 'line': drawLine(e); break;
-            case 'rectangle': drawRectangle(e); break;
-            case 'circle': drawCircle(e); break;
-            case 'ellipse': drawEllipse(e); break;
-            case 'triangle': drawTriangle(e); break;
+    // --- Fungsi Handler Aksi Utama (Mousedown, Mousemove, Mouseup) ---
+
+    const startAction = (e) => {
+        const x = e.offsetX;
+        const y = e.offsetY;
+        startX = x;
+        startY = y;
+
+        if (currentTool === 'select') {
+            selectedImage = null; // Deseleksi dulu
+            let clickedOnHandle = false;
+
+            // Iterasi dari gambar teratas ke bawah
+            for (let i = pages[currentPage].images.length - 1; i >= 0; i--) {
+                const imgObj = pages[currentPage].images[i];
+                const handleX = imgObj.x + imgObj.width;
+                const handleY = imgObj.y + imgObj.height;
+                // Cek apakah mengklik handle resize
+                if (x >= handleX - resizeHandleSize && x <= handleX + resizeHandleSize && y >= handleY - resizeHandleSize && y <= handleY + resizeHandleSize) {
+                    isResizing = true;
+                    selectedImage = imgObj;
+                    clickedOnHandle = true;
+                    break;
+                }
+                // Cek apakah mengklik gambar
+                if (x >= imgObj.x && x <= imgObj.x + imgObj.width && y >= imgObj.y && y <= imgObj.y + imgObj.height) {
+                    isDragging = true;
+                    selectedImage = imgObj;
+                    dragOffsetX = x - imgObj.x;
+                    dragOffsetY = y - imgObj.y;
+                    break;
+                }
+            }
+            redrawCanvas();
+
+        } else { // Jika alat gambar yang aktif
+            isDrawing = true;
+            // Simpan snapshot dari *seluruh* canvas saat ini
+            snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            ctx.beginPath();
+            ctx.lineWidth = currentTool === 'eraser' ? 25 : brushWidth;
+            ctx.strokeStyle = currentTool === 'eraser' ? 'white' : currentColor;
+            ctx.fillStyle = currentColor;
+            ctx.lineCap = "round";
+            ctx.lineJoin = "round";
         }
     };
 
-    // Fungsi yang dijalankan saat mouse dilepas (berhenti menggambar)
-    const stopDraw = () => {
-        if (!isDrawing) return;
-        ctx.closePath();
-        isDrawing = false;
-        // Simpan state halaman setelah selesai menggambar
-        pagesData[currentPage] = canvas.toDataURL();
+    const moveAction = (e) => {
+        if (isDragging && selectedImage) {
+            selectedImage.x = e.offsetX - dragOffsetX;
+            selectedImage.y = e.offsetY - dragOffsetY;
+            redrawCanvas();
+        } else if (isResizing && selectedImage) {
+            const newWidth = Math.max(20, e.offsetX - selectedImage.x);
+            const ratio = selectedImage.img.naturalHeight / selectedImage.img.naturalWidth;
+            selectedImage.width = newWidth;
+            selectedImage.height = newWidth * ratio;
+            redrawCanvas();
+        } else if (isDrawing) {
+            ctx.putImageData(snapshot, 0, 0); // Kembalikan ke keadaan awal sebelum digerakkan
+            isDashed = dashedCheckbox.checked;
+            ctx.setLineDash(isDashed ? [10, 10] : []);
+
+            switch (currentTool) {
+                case 'pen':
+                case 'eraser':
+                    ctx.lineTo(e.offsetX, e.offsetY);
+                    ctx.stroke();
+                    break;
+                case 'line': drawLine(e, ctx); break;
+                case 'rectangle': drawRectangle(e, ctx); break;
+                case 'circle': drawCircle(e, ctx); break;
+                case 'ellipse': drawEllipse(e, ctx); break;
+                case 'triangle': drawTriangle(e, ctx); break;
+            }
+        } else if (currentTool === 'select') {
+             // Ubah kursor saat hover di atas gambar atau handle
+            let hovering = false;
+            for (let i = pages[currentPage].images.length - 1; i >= 0; i--) {
+                const imgObj = pages[currentPage].images[i];
+                const handleX = imgObj.x + imgObj.width;
+                const handleY = imgObj.y + imgObj.height;
+                if (e.offsetX >= handleX - resizeHandleSize && e.offsetX <= handleX + resizeHandleSize && e.offsetY >= handleY - resizeHandleSize && e.offsetY <= handleY + resizeHandleSize) {
+                    canvas.style.cursor = 'nwse-resize';
+                    hovering = true;
+                    break;
+                }
+                if (e.offsetX >= imgObj.x && e.offsetX <= imgObj.x + imgObj.width && e.offsetY >= imgObj.y && e.offsetY <= imgObj.y + imgObj.height) {
+                    canvas.style.cursor = 'move';
+                    hovering = true;
+                    break;
+                }
+            }
+            if (!hovering) canvas.style.cursor = 'default';
+        }
     };
-    
-    // Fungsi untuk menangani paste gambar dari clipboard
+
+    const stopAction = (e) => {
+        if (isDrawing) {
+            ctx.closePath();
+            isDrawing = false;
+            // Simpan gambar baru sebagai latar belakang
+            pages[currentPage].drawingData = canvas.toDataURL();
+        }
+        isDragging = false;
+        isResizing = false;
+    };
+
     const handlePaste = async (e) => {
         try {
             const clipboardItems = e.clipboardData.items;
             for (const item of clipboardItems) {
-                // Cari item yang merupakan gambar
                 if (item.type.startsWith("image/")) {
                     const blob = item.getAsFile();
-                    const imageUrl = URL.createObjectURL(blob);
                     const image = new Image();
                     image.onload = () => {
-                        // Gambar image di tengah kanvas
-                        const x = (canvas.width - image.width) / 2;
-                        const y = (canvas.height - image.height) / 2;
-                        ctx.drawImage(image, x, y);
-                        URL.revokeObjectURL(imageUrl); // Membersihkan memori
-                        pagesData[currentPage] = canvas.toDataURL(); // Simpan state setelah paste
+                        const maxWidth = canvas.width * 0.5;
+                        const maxHeight = canvas.height * 0.5;
+                        let width = image.naturalWidth;
+                        let height = image.naturalHeight;
+                        if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; }
+                        if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; }
+                        const x = (canvas.width - width) / 2;
+                        const y = (canvas.height - height) / 2;
+                        
+                        const imgObj = { img: image, x, y, width, height };
+                        pages[currentPage].images.push(imgObj);
+                        redrawCanvas();
+                        URL.revokeObjectURL(image.src);
                     };
-                    image.src = imageUrl;
-                    break; // Hanya paste satu gambar
+                    image.src = URL.createObjectURL(blob);
+                    break;
                 }
             }
         } catch (err) {
@@ -382,60 +470,44 @@ window.addEventListener('load', () => {
     };
 
     // --- EVENT LISTENERS ---
-    canvas.addEventListener('mousedown', startDraw);
-    canvas.addEventListener('mousemove', drawing);
-    canvas.addEventListener('mouseup', stopDraw);
-    canvas.addEventListener('mouseout', stopDraw);
+    canvas.addEventListener('mousedown', startAction);
+    canvas.addEventListener('mousemove', moveAction);
+    canvas.addEventListener('mouseup', stopAction);
+    canvas.addEventListener('mouseout', stopAction);
+    window.addEventListener('paste', handlePaste);
 
-    // Tombol bersihkan kanvas
     clearBtn.addEventListener('click', () => {
-        ctx.fillStyle = "white";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        pagesData[currentPage] = canvas.toDataURL(); // Simpan state halaman yang sudah bersih
+        // Hapus coretan dan gambar
+        pages[currentPage].drawingData = null;
+        pages[currentPage].images = [];
+        selectedImage = null;
+        redrawCanvas();
     });
 
-    // Event listener untuk setiap tombol alat
     toolBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            setActiveTool(btn);
-        });
+        btn.addEventListener('click', () => setActiveTool(btn));
     });
 
-    // Event listener untuk setiap tombol warna
     colorBtns.forEach(btn => {
         btn.addEventListener('click', () => setActiveColor(btn));
     });
 
-    // Event listener untuk setiap tombol ketebalan
     strokeWidthBtns.forEach(btn => {
         btn.addEventListener('click', () => setActiveStroke(btn));
     });
-
-    // Event listener untuk paste (Ctrl+V)
-    window.addEventListener('paste', handlePaste);
 
     // --- LOGIKA PAGINASI ---
     const changePage = (newPage) => {
         if (newPage < 0) return;
 
-        // 1. Simpan state halaman saat ini
-        pagesData[currentPage] = canvas.toDataURL();
         currentPage = newPage;
-
-        // 2. Muat state halaman baru jika ada, atau buat halaman baru
-        if (pagesData[currentPage]) {
-            const img = new Image();
-            img.onload = () => {
-                ctx.fillStyle = "white";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.drawImage(img, 0, 0);
-            };
-            img.src = pagesData[currentPage];
-        } else {
-            ctx.fillStyle = "white";
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            pagesData[currentPage] = canvas.toDataURL(); // Simpan halaman baru yang kosong
+        // Buat halaman baru jika belum ada
+        if (!pages[currentPage]) {
+            pages[currentPage] = { drawingData: null, images: [] };
         }
+        
+        selectedImage = null;
+        redrawCanvas();
         pageNumDisplay.textContent = currentPage + 1;
     };
 
@@ -446,4 +518,3 @@ window.addEventListener('load', () => {
 
 </body>
 </html>
-
