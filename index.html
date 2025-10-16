@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Papan Tulis Digital Interaktif</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Menggunakan font Inter dari Google Fonts */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            touch-action: none; /* Mencegah scrolling saat menggambar di perangkat mobile */
+        }
+        /* Style kustom untuk slider agar lebih terlihat */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #4A90E2;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #4A90E2;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+        /* Menambahkan kursor yang berbeda saat hover di atas gambar */
+        #whiteboard.draggable {
+            cursor: move;
+        }
+        #whiteboard {
+            cursor: crosshair;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex flex-col h-screen overflow-hidden">
+
+    <!-- Header / Toolbar -->
+    <header class="bg-white shadow-md p-2 flex items-center justify-between z-10">
+        <div class="flex items-center space-x-4">
+            <h1 class="text-lg font-bold text-gray-700 hidden sm:block">Papan Tulis Digital</h1>
+             <!-- Kontrol Alat Gambar -->
+            <div class="flex items-center space-x-3 bg-gray-100 p-2 rounded-lg">
+                <label for="colorPicker" class="cursor-pointer" title="Ubah Warna">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0L12 2.69z"></path><path d="M12 22.31V12"></path></svg>
+                </label>
+                <input type="color" id="colorPicker" value="#000000" class="w-0 h-0 opacity-0 absolute">
+
+                <label for="brushSize" class="text-sm font-medium text-gray-600" title="Ukuran Kuas">Ukuran:</label>
+                <input type="range" id="brushSize" min="1" max="50" value="5" class="w-24 cursor-pointer">
+
+                <button id="eraserBtn" class="p-2 rounded-md hover:bg-gray-200 transition-colors" title="Penghapus">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600"><path d="M2.5 17a1 1 0 0 0 1 1H13a8 8 0 0 0 0-16H4.5a1 1 0 0 0-1 1.57L8.43 12 2.5 17z"></path><path d="M21.17 17.83a1 1 0 0 0-1.41 0L12 20h9a1 1 0 0 0 .17-1.17z"></path></svg>
+                </button>
+
+                 <button id="clearBtn" class="p-2 rounded-md hover:bg-gray-200 transition-colors" title="Bersihkan Halaman">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Kontrol Navigasi Slide -->
+        <div class="flex items-center space-x-2">
+            <button id="prevSlide" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors" title="Halaman Sebelumnya">
+                &lt;
+            </button>
+            <div class="font-medium text-gray-800 text-center w-16">
+                Halaman <span id="currentSlideNum">1</span>
+            </div>
+            <button id="nextSlide" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors" title="Halaman Berikutnya">
+                &gt;
+            </button>
+        </div>
+    </header>
+
+    <!-- Area Kanvas untuk Menggambar -->
+    <main class="flex-grow flex items-center justify-center p-4">
+        <canvas id="whiteboard" class="bg-white shadow-lg rounded-md"></canvas>
+    </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const canvas = document.getElementById('whiteboard');
+            const ctx = canvas.getContext('2d');
+
+            const colorPicker = document.getElementById('colorPicker');
+            const brushSize = document.getElementById('brushSize');
+            const eraserBtn = document.getElementById('eraserBtn');
+            const clearBtn = document.getElementById('clearBtn');
+            const prevSlideBtn = document.getElementById('prevSlide');
+            const nextSlideBtn = document.getElementById('nextSlide');
+            const currentSlideNumSpan = document.getElementById('currentSlideNum');
+
+            // --- State Management ---
+            let slides = [];
+            let currentSlideIndex = 0;
+
+            let isDrawing = false;
+            let isDragging = false;
+            let selectedImage = null;
+            let dragOffsetX = 0;
+            let dragOffsetY = 0;
+            let lastX = 0;
+            let lastY = 0;
+
+            // Fungsi untuk inisialisasi slide jika belum ada
+            function ensureSlideData(index) {
+                if (!slides[index]) {
+                    slides[index] = {
+                        drawing: null, // Akan menyimpan ImageData untuk coretan
+                        images: []     // Akan menyimpan objek gambar {img, x, y, width, height}
+                    };
+                }
+            }
+
+            // Fungsi untuk menggambar ulang seluruh kanvas (lapisan coretan + lapisan gambar)
+            function redrawCanvas() {
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                const currentSlide = slides[currentSlideIndex];
+                if (!currentSlide) return;
+
+                // 1. Gambar lapisan coretan
+                if (currentSlide.drawing) {
+                    ctx.putImageData(currentSlide.drawing, 0, 0);
+                }
+
+                // 2. Gambar semua gambar di atas lapisan coretan
+                currentSlide.images.forEach(imgObj => {
+                    ctx.drawImage(imgObj.img, imgObj.x, imgObj.y, imgObj.width, imgObj.height);
+                });
+            }
+
+            // Fungsi untuk mengatur ukuran kanvas
+            function resizeCanvas() {
+                const main = document.querySelector('main');
+                const width = main.clientWidth - 32;
+                const height = main.clientHeight - 32;
+                const aspectRatio = 16 / 9;
+                let canvasWidth = width;
+                let canvasHeight = width / aspectRatio;
+
+                if (canvasHeight > height) {
+                    canvasHeight = height;
+                    canvasWidth = height * aspectRatio;
+                }
+
+                // Simpan state sebelum resize
+                saveCurrentSlide();
+                const oldCanvasData = slides[currentSlideIndex];
+
+                canvas.width = canvasWidth;
+                canvas.height = canvasHeight;
+                
+                // Kembalikan state setelah resize dan gambar ulang
+                slides[currentSlideIndex] = oldCanvasData;
+                redrawCanvas();
+                
+                // Atur ulang properti konteks gambar
+                ctx.strokeStyle = colorPicker.value;
+                ctx.lineWidth = brushSize.value;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+            }
+            
+            // Menyimpan state slide saat ini (coretan dan gambar)
+            function saveCurrentSlide() {
+                ensureSlideData(currentSlideIndex);
+                // Menyimpan hanya coretan dengan menggambar ulang tanpa gambar
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCanvas.width = canvas.width;
+                tempCanvas.height = canvas.height;
+                if(slides[currentSlideIndex] && slides[currentSlideIndex].drawing) {
+                    tempCtx.putImageData(slides[currentSlideIndex].drawing, 0, 0);
+                }
+                slides[currentSlideIndex].drawing = tempCtx.getImageData(0, 0, canvas.width, canvas.height);
+            }
+
+            // Memuat slide baru
+            function loadSlide(index) {
+                ensureSlideData(index);
+                currentSlideIndex = index;
+                redrawCanvas();
+                currentSlideNumSpan.textContent = index + 1;
+            }
+
+            // Fungsi untuk menggambar garis
+            function draw(e) {
+                if (!isDrawing) return;
+                const { x, y } = getMousePos(e);
+
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
+                ctx.lineTo(x, y);
+                ctx.stroke();
+
+                [lastX, lastY] = [x, y];
+            }
+            
+            // Mendapatkan posisi mouse/sentuhan relatif terhadap kanvas
+            function getMousePos(e) {
+                const rect = canvas.getBoundingClientRect();
+                const clientX = e.clientX || e.touches[0].clientX;
+                const clientY = e.clientY || e.touches[0].clientY;
+                return {
+                    x: clientX - rect.left,
+                    y: clientY - rect.top
+                };
+            }
+
+            // --- Event Listeners ---
+
+            // Memulai aksi (menggambar atau menggeser)
+            function startAction(e) {
+                const { x, y } = getMousePos(e);
+                
+                // Cek apakah mengklik gambar (loop dari gambar teratas)
+                const images = slides[currentSlideIndex]?.images || [];
+                for (let i = images.length - 1; i >= 0; i--) {
+                    const imgObj = images[i];
+                    if (x >= imgObj.x && x <= imgObj.x + imgObj.width && y >= imgObj.y && y <= imgObj.y + imgObj.height) {
+                        isDragging = true;
+                        selectedImage = imgObj;
+                        dragOffsetX = x - imgObj.x;
+                        dragOffsetY = y - imgObj.y;
+                        return; // Hentikan aksi agar tidak memulai menggambar
+                    }
+                }
+                
+                // Jika tidak mengklik gambar, mulai menggambar
+                isDrawing = true;
+                [lastX, lastY] = [x, y];
+                 // Simpan state coretan yang ada sebelum memulai yang baru
+                slides[currentSlideIndex].drawing = ctx.getImageData(0,0,canvas.width, canvas.height);
+            }
+
+            // Aksi saat bergerak
+            function moveAction(e) {
+                const { x, y } = getMousePos(e);
+                
+                if (isDragging && selectedImage) {
+                    selectedImage.x = x - dragOffsetX;
+                    selectedImage.y = y - dragOffsetY;
+                    redrawCanvas();
+                } else if (isDrawing) {
+                    draw(e);
+                } else {
+                     // Ubah kursor jika hover di atas gambar
+                    const images = slides[currentSlideIndex]?.images || [];
+                    let onImage = false;
+                    for (const imgObj of images) {
+                         if (x >= imgObj.x && x <= imgObj.x + imgObj.width && y >= imgObj.y && y <= imgObj.y + imgObj.height) {
+                            onImage = true;
+                            break;
+                        }
+                    }
+                    canvas.classList.toggle('draggable', onImage);
+                }
+            }
+
+            // Mengakhiri aksi
+            function stopAction() {
+                 if (isDrawing) {
+                    isDrawing = false;
+                    // Simpan state coretan setelah selesai menggambar
+                    slides[currentSlideIndex].drawing = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                 }
+                if (isDragging) {
+                    isDragging = false;
+                    selectedImage = null;
+                }
+            }
+            
+            canvas.addEventListener('mousedown', startAction);
+            canvas.addEventListener('touchstart', startAction);
+            canvas.addEventListener('mousemove', moveAction);
+            canvas.addEventListener('touchmove', moveAction);
+            canvas.addEventListener('mouseup', stopAction);
+            canvas.addEventListener('mouseout', stopAction);
+            canvas.addEventListener('touchend', stopAction);
+
+            // Menangani paste gambar dari clipboard
+            window.addEventListener('paste', e => {
+                const items = e.clipboardData.items;
+                for (const item of items) {
+                    if (item.type.indexOf('image') !== -1) {
+                        const blob = item.getAsFile();
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                            const img = new Image();
+                            img.onload = () => {
+                                // Skalakan gambar jika terlalu besar
+                                const maxWidth = canvas.width * 0.5;
+                                const maxHeight = canvas.height * 0.5;
+                                let { width, height } = img;
+                                if (width > maxWidth) {
+                                    height = (maxWidth / width) * height;
+                                    width = maxWidth;
+                                }
+                                if (height > maxHeight) {
+                                    width = (maxHeight / height) * width;
+                                    height = maxHeight;
+                                }
+
+                                ensureSlideData(currentSlideIndex);
+                                slides[currentSlideIndex].images.push({
+                                    img: img, x: 10, y: 10, width, height
+                                });
+                                redrawCanvas();
+                            };
+                            img.src = event.target.result;
+                        };
+                        reader.readAsDataURL(blob);
+                        e.preventDefault(); // Mencegah perilaku default paste
+                        break;
+                    }
+                }
+            });
+
+
+            // --- Kontrol Toolbar ---
+            colorPicker.addEventListener('change', (e) => {
+                ctx.strokeStyle = e.target.value;
+            });
+            brushSize.addEventListener('input', (e) => ctx.lineWidth = e.target.value);
+            eraserBtn.addEventListener('click', () => ctx.strokeStyle = 'white');
+            clearBtn.addEventListener('click', () => {
+                 ensureSlideData(currentSlideIndex);
+                 slides[currentSlideIndex].drawing = null;
+                 slides[currentSlideIndex].images = [];
+                 redrawCanvas();
+            });
+
+            // Navigasi slide
+            nextSlideBtn.addEventListener('click', () => {
+                saveCurrentSlide();
+                loadSlide(currentSlideIndex + 1);
+            });
+            prevSlideBtn.addEventListener('click', () => {
+                if (currentSlideIndex > 0) {
+                    saveCurrentSlide();
+                    loadSlide(currentSlideIndex - 1);
+                }
+            });
+
+            // Inisialisasi
+            window.addEventListener('resize', resizeCanvas);
+            loadSlide(0); // Memuat slide pertama
+            resizeCanvas(); // Mengatur ukuran kanvas saat pertama kali dimuat
+        });
+    </script>
+</body>
+</html>
+
